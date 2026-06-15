@@ -199,3 +199,150 @@ impl CodeComplianceResult {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_design_code_all_variants() {
+        let all = DesignCode::all();
+        assert_eq!(all.len(), 4);
+        assert!(all.contains(&DesignCode::CJJ692015));
+        assert!(all.contains(&DesignCode::JTGTD602015));
+        assert!(all.contains(&DesignCode::EurocodeEN19912));
+        assert!(all.contains(&DesignCode::BS5400));
+    }
+
+    #[test]
+    fn test_design_code_display_names() {
+        assert_eq!(DesignCode::CJJ692015.display_name(), "CJJ 69-2015 城市人行桥");
+        assert_eq!(DesignCode::JTGTD602015.display_name(), "JTG/T D60-2015 公路桥抗风");
+        assert_eq!(DesignCode::EurocodeEN19912.display_name(), "EN 1991-2 欧洲人行桥");
+        assert_eq!(DesignCode::BS5400.display_name(), "BS 5400 英国桥梁");
+        assert_eq!(DesignCode::BS5400.as_str(), "BS 5400");
+    }
+
+    #[test]
+    fn test_code_compliance_normal_bs001() {
+        let result = CodeComplianceResult::evaluate("BS001", 25.0);
+        assert!(result.is_some(), "BS001桥应存在");
+        let r = result.unwrap();
+        assert_eq!(r.bridge_id, "BS001");
+        assert_eq!(r.checks.len(), 8, "应包含8项校核");
+        assert!(r.overall_safety_factor.is_finite());
+        assert!(!r.applicability_note.is_empty());
+        assert!(!r.ancient_bridge_specific_risks.is_empty());
+        assert!(r.ancient_bridge_specific_risks.len() >= 4);
+    }
+
+    #[test]
+    fn test_code_compliance_boundary_bs5400_damping_passes() {
+        let result = CodeComplianceResult::evaluate("BS001", 20.0).unwrap();
+        let bs5400_damping = result.checks.iter().find(|c| {
+            matches!(c.code, DesignCode::BS5400) && c.check_name.contains("阻尼")
+        });
+        assert!(bs5400_damping.is_some(), "应找到BS5400阻尼校核项");
+        let check = bs5400_damping.unwrap();
+        assert!(check.passed, "铁索桥ξ=0.01应≥0.005, 安全系数={}", check.safety_factor);
+        assert!(check.safety_factor >= 1.0, "阻尼安全系数应≥1.0");
+    }
+
+    #[test]
+    fn test_code_compliance_boundary_cjj69_frequency_fails() {
+        let result = CodeComplianceResult::evaluate("BS001", 20.0).unwrap();
+        let cjj_freq = result.checks.iter().find(|c| {
+            matches!(c.code, DesignCode::CJJ692015) && c.check_name.contains("竖向自振频率")
+        });
+        assert!(cjj_freq.is_some(), "应找到CJJ69频率校核项");
+        let check = cjj_freq.unwrap();
+        assert!(!check.passed,
+            "古代铁索桥频率约0.38Hz应<3Hz, 不通过CJJ69限值。实际={}", check.actual_value);
+        assert!(check.safety_factor < 1.0,
+            "频率安全系数应<1.0, 实际={}", check.safety_factor);
+    }
+
+    #[test]
+    fn test_code_compliance_boundary_en1991_frequency_fails() {
+        let result = CodeComplianceResult::evaluate("BS001", 20.0).unwrap();
+        let en_freq = result.checks.iter().find(|c| {
+            matches!(c.code, DesignCode::EurocodeEN19912) && c.check_name.contains("竖向频率")
+        });
+        assert!(en_freq.is_some());
+        let check = en_freq.unwrap();
+        assert!(!check.passed, "EN 1991-2要求≥5Hz, 古桥远低于此");
+    }
+
+    #[test]
+    fn test_code_compliance_boundary_high_wind_reduces_safety_factor() {
+        let r_low = CodeComplianceResult::evaluate("BS001", 5.0).unwrap();
+        let r_high = CodeComplianceResult::evaluate("BS001", 100.0).unwrap();
+
+        let bs5400_low = r_low.checks.iter().find(|c| matches!(c.code, DesignCode::BS5400) && c.check_name.contains("风荷载安全系数")).unwrap();
+        let bs5400_high = r_high.checks.iter().find(|c| matches!(c.code, DesignCode::BS5400) && c.check_name.contains("风荷载安全系数")).unwrap();
+
+        assert!(bs5400_low.safety_factor > bs5400_high.safety_factor,
+            "风速增大时风荷载安全系数应降低。低风速SF={}, 高风速SF={}",
+            bs5400_low.safety_factor, bs5400_high.safety_factor);
+    }
+
+    #[test]
+    fn test_code_compliance_boundary_wind_equals_critical() {
+        let result = CodeComplianceResult::evaluate("BS001", 45.0).unwrap();
+        let bs5400_wind = result.checks.iter().find(|c| {
+            matches!(c.code, DesignCode::BS5400) && c.check_name.contains("风荷载安全系数")
+        });
+        if let Some(check) = bs5400_wind {
+            assert!(check.safety_factor.is_finite() && !check.safety_factor.is_nan());
+        }
+    }
+
+    #[test]
+    fn test_code_compliance_boundary_very_low_wind() {
+        let result = CodeComplianceResult::evaluate("BS001", 0.5).unwrap();
+        let bs5400_wind = result.checks.iter().find(|c| {
+            matches!(c.code, DesignCode::BS5400) && c.check_name.contains("风荷载安全系数")
+        });
+        if let Some(check) = bs5400_wind {
+            assert!(check.safety_factor.is_finite(), "极低风速下安全系数不应为NaN或Inf");
+            assert!(check.safety_factor > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_code_compliance_anomaly_invalid_bridge() {
+        let result = CodeComplianceResult::evaluate("INVALID_BRIDGE", 20.0);
+        assert!(result.is_none(), "不存在的桥应返回None");
+    }
+
+    #[test]
+    fn test_code_compliance_overall_safety_factor_is_minimum() {
+        let result = CodeComplianceResult::evaluate("BS001", 25.0).unwrap();
+        let min_sf = result.checks.iter().map(|c| c.safety_factor).fold(f64::INFINITY, f64::min);
+        assert!((result.overall_safety_factor - min_sf).abs() < 1e-9,
+            "overall_safety_factor应等于所有校核项中的最小值");
+    }
+
+    #[test]
+    fn test_code_compliance_overall_compliant_all_passed() {
+        let result = CodeComplianceResult::evaluate("BS001", 25.0).unwrap();
+        let passed_count = result.checks.iter().filter(|c| c.passed).count();
+        assert_eq!(result.overall_compliant, passed_count == result.checks.len(),
+            "overall_compliant应仅在所有校核都通过时为true");
+        assert!(!result.overall_compliant,
+            "古桥参数不应通过全部现代规范校核");
+    }
+
+    #[test]
+    fn test_code_compliance_all_bridges() {
+        let bridges = &["BS001", "BS002", "BS003", "BS004", "BS005",
+            "BS006", "BS007", "BS008", "BS009", "BS010"];
+        for bid in bridges {
+            let result = CodeComplianceResult::evaluate(bid, 20.0);
+            assert!(result.is_some(), "桥 {} 应存在", bid);
+            let r = result.unwrap();
+            assert_eq!(r.checks.len(), 8);
+            assert!(!r.ancient_bridge_specific_risks.is_empty());
+        }
+    }
+}

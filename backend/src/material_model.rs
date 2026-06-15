@@ -133,12 +133,13 @@ impl MaterialDampingProfile {
                 }
             };
 
-            let xi_aero = -0.5 * 2.7 * (1.2 * (9.81 / span).sqrt() * width / wind_speed.max(0.5))
-                / (1.2 * (9.81 / span).sqrt() * width / wind_speed.max(0.5))
-                * 1.225 * wind_speed.powi(2) * width
-                / (2.0 * width * 2.0 * PI * 1.2 * (9.81 / span).sqrt());
+            let omega = 1.2 * (9.81 / span).sqrt();
+            let k = omega * width / wind_speed.max(0.5);
+            let xi_aero_raw = -0.5 * 2.7 * (1.225 * width.powi(2))
+                / (2.0 * width * 0.5 * 7850.0) / (2.0 * k);
+            let xi_aero = xi_aero_raw.max(-0.02).min(0.08);
 
-            let eff_damping = xi_s + xi_aero * (1.0 / aero_damp_mod);
+            let eff_damping = (xi_s + xi_aero * (1.0 / aero_damp_mod)).max(0.001).min(0.3);
 
             let ucr_mod = match mat {
                 CableMaterial::IronChain => 1.0,
@@ -217,5 +218,155 @@ impl MaterialComparisonResult {
             best_material_for_fatigue: best_fat_material,
             recommendation: rec,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cable_material_structural_damping_values() {
+        assert!((CableMaterial::Bamboo.structural_damping() - 0.035).abs() < 1e-9,
+            "竹索结构阻尼应为0.035");
+        assert!((CableMaterial::Rattan.structural_damping() - 0.055).abs() < 1e-9,
+            "藤索结构阻尼应为0.055");
+        assert!((CableMaterial::IronChain.structural_damping() - 0.008).abs() < 1e-9,
+            "铁索结构阻尼应为0.008");
+
+        assert!(CableMaterial::Rattan.structural_damping() > CableMaterial::Bamboo.structural_damping(),
+            "藤索阻尼应大于竹索");
+        assert!(CableMaterial::Bamboo.structural_damping() > CableMaterial::IronChain.structural_damping(),
+            "竹索阻尼应大于铁索");
+    }
+
+    #[test]
+    fn test_cable_material_physical_properties() {
+        assert!((CableMaterial::IronChain.elastic_modulus_gpa() - 180.0).abs() < 1e-9);
+        assert!((CableMaterial::Bamboo.elastic_modulus_gpa() - 12.0).abs() < 1e-9);
+        assert!((CableMaterial::Rattan.elastic_modulus_gpa() - 5.5).abs() < 1e-9);
+
+        assert!((CableMaterial::IronChain.density_kg_m3() - 7850.0).abs() < 1e-9);
+        assert!((CableMaterial::Bamboo.density_kg_m3() - 650.0).abs() < 1e-9);
+        assert!((CableMaterial::Rattan.density_kg_m3() - 450.0).abs() < 1e-9);
+
+        assert!((CableMaterial::IronChain.tensile_strength_mpa() - 400.0).abs() < 1e-9);
+        assert!((CableMaterial::Bamboo.tensile_strength_mpa() - 120.0).abs() < 1e-9);
+        assert!((CableMaterial::Rattan.tensile_strength_mpa() - 65.0).abs() < 1e-9);
+
+        assert!(CableMaterial::IronChain.fatigue_factor() > CableMaterial::Bamboo.fatigue_factor(),
+            "铁索疲劳因子应大于竹索");
+        assert!(CableMaterial::IronChain.fatigue_factor() > CableMaterial::Rattan.fatigue_factor(),
+            "铁索疲劳因子应大于藤索");
+
+        assert!(CableMaterial::Rattan.creep_coefficient() > CableMaterial::Bamboo.creep_coefficient(),
+            "藤索蠕变系数应大于竹索");
+        assert!(CableMaterial::Bamboo.creep_coefficient() > CableMaterial::IronChain.creep_coefficient(),
+            "竹索蠕变系数应大于铁索");
+    }
+
+    #[test]
+    fn test_material_damping_profile_normal_case() {
+        let profiles = MaterialDampingProfile::compute(100.0, 2.8, 15.0, 0.0);
+        assert_eq!(profiles.len(), 3, "应返回3种材料的profile");
+
+        let rattan = profiles.iter().find(|p| matches!(p.material, CableMaterial::Rattan)).unwrap();
+        let bamboo = profiles.iter().find(|p| matches!(p.material, CableMaterial::Bamboo)).unwrap();
+        let iron = profiles.iter().find(|p| matches!(p.material, CableMaterial::IronChain)).unwrap();
+
+        assert!(rattan.effective_total_damping > bamboo.effective_total_damping,
+            "藤索有效阻尼应大于竹索");
+        assert!(bamboo.effective_total_damping > iron.effective_total_damping,
+            "竹索有效阻尼应大于铁索");
+
+        assert!(rattan.effective_total_damping > 0.0 && rattan.effective_total_damping < 0.3,
+            "有效阻尼应在合理范围(0, 0.3)");
+
+        assert!(iron.flutter_critical_speed_modifier >= 0.85,
+            "铁索Ucr修正因子不应过低");
+
+        assert!(rattan.max_vibration_amplitude_ratio > 0.0 && rattan.max_vibration_amplitude_ratio <= 5.0,
+            "振幅比应在(0, 5]范围内");
+    }
+
+    #[test]
+    fn test_material_damping_profile_boundary_wind_zero() {
+        let profiles = MaterialDampingProfile::compute(100.0, 2.8, 0.0, 0.0);
+        assert_eq!(profiles.len(), 3);
+        for p in &profiles {
+            assert!(!p.effective_total_damping.is_nan(),
+                "风速为0时阻尼计算不应产生NaN");
+            assert!(!p.effective_total_damping.is_infinite(),
+                "风速为0时阻尼计算不应产生Inf");
+        }
+    }
+
+    #[test]
+    fn test_material_damping_profile_boundary_extreme_wind() {
+        let profiles = MaterialDampingProfile::compute(100.0, 2.8, 100.0, 0.0);
+        assert_eq!(profiles.len(), 3);
+        for p in &profiles {
+            assert!(!p.effective_total_damping.is_nan(),
+                "极端风速100m/s下不应产生NaN");
+            assert!(p.max_vibration_amplitude_ratio > 0.0,
+                "极端风速下振幅比必须为正");
+        }
+    }
+
+    #[test]
+    fn test_material_damping_profile_boundary_large_attack_angle() {
+        let profiles_neg = MaterialDampingProfile::compute(100.0, 2.8, 20.0, -12.0);
+        let profiles_pos = MaterialDampingProfile::compute(100.0, 2.8, 20.0, 12.0);
+        assert_eq!(profiles_neg.len(), 3);
+        assert_eq!(profiles_pos.len(), 3);
+        for p in &profiles_neg { assert!(!p.effective_total_damping.is_nan()); }
+        for p in &profiles_pos { assert!(!p.effective_total_damping.is_nan()); }
+    }
+
+    #[test]
+    fn test_material_comparison_normal() {
+        let result = MaterialComparisonResult::compute("BS001", 20.0, 3.0);
+        assert!(result.is_some(), "BS001桥应存在");
+        let r = result.unwrap();
+        assert_eq!(r.bridge_id, "BS001");
+        assert_eq!(r.wind_speed, 20.0);
+        assert_eq!(r.profiles.len(), 3);
+        assert!(!r.best_material_for_damping.is_empty());
+        assert!(!r.best_material_for_stability.is_empty());
+        assert!(!r.best_material_for_fatigue.is_empty());
+        assert!(!r.recommendation.is_empty());
+    }
+
+    #[test]
+    fn test_material_comparison_anomaly_invalid_bridge() {
+        let result = MaterialComparisonResult::compute("INVALID_ID", 20.0, 0.0);
+        assert!(result.is_none(), "不存在的桥应返回None");
+    }
+
+    #[test]
+    fn test_material_comparison_boundary_small_span() {
+        let result = MaterialComparisonResult::compute("BS009", 15.0, 0.0);
+        assert!(result.is_some(), "BS009(短跨径)应正常计算");
+        let r = result.unwrap();
+        assert_eq!(r.profiles.len(), 3);
+        for p in &r.profiles {
+            assert!(p.effective_total_damping.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_material_display_name() {
+        assert_eq!(CableMaterial::Bamboo.display_name(), "竹索");
+        assert_eq!(CableMaterial::Rattan.display_name(), "藤索");
+        assert_eq!(CableMaterial::IronChain.display_name(), "铁索");
+    }
+
+    #[test]
+    fn test_material_all_contains_three() {
+        let all = CableMaterial::all();
+        assert_eq!(all.len(), 3);
+        assert!(all.contains(&CableMaterial::Bamboo));
+        assert!(all.contains(&CableMaterial::Rattan));
+        assert!(all.contains(&CableMaterial::IronChain));
     }
 }

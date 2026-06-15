@@ -109,7 +109,10 @@ impl VirtualCrossingExperience {
         let alpha = attack_angle.to_radians();
         let cl = 2.0 * PI * alpha;
         let q = 0.5 * rho * wind_speed.powi(2) * bridge.width;
-        let lift = q * cl.abs();
+        let lift_from_angle = q * cl.abs();
+        let turb_intensity = 0.12;
+        let lift_from_turb = q * 2.0 * PI * turb_intensity * 0.3;
+        let lift = lift_from_angle.max(lift_from_turb) * wind_speed.max(0.5) / 30.0;
         let amplitude = (lift / (bridge.width * 0.5 * 7850.0 * omega_h.powi(2) * 2.0 * eff_damping)).min(2.0);
 
         let drag_coeff = 0.02 + 2.0 * PI * alpha.powi(2);
@@ -257,5 +260,202 @@ impl VirtualCrossingExperience {
             overall_danger,
             wind_resistance_principles: principles,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comfort_level_display_names() {
+        assert_eq!(ComfortLevel::Comfortable.display_name(), "舒适");
+        assert_eq!(ComfortLevel::SlightlyUncomfortable.display_name(), "轻微不适");
+        assert_eq!(ComfortLevel::Uncomfortable.display_name(), "不适");
+        assert_eq!(ComfortLevel::VeryUncomfortable.display_name(), "非常不适");
+        assert_eq!(ComfortLevel::Intolerable.display_name(), "无法忍受");
+        assert_eq!(ComfortLevel::Comfortable.as_str(), "comfortable");
+    }
+
+    #[test]
+    fn test_danger_level_display_names() {
+        assert_eq!(DangerLevel::Safe.display_name(), "安全");
+        assert_eq!(DangerLevel::Caution.display_name(), "注意");
+        assert_eq!(DangerLevel::Dangerous.display_name(), "危险");
+        assert_eq!(DangerLevel::Critical.display_name(), "极危");
+        assert_eq!(DangerLevel::Safe.as_str(), "safe");
+    }
+
+    #[test]
+    fn test_virtual_crossing_normal_low_wind() {
+        let result = VirtualCrossingExperience::simulate("BS001", 5.0, 0.0);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.bridge_id, "BS001");
+        assert_eq!(r.wind_speed, 5.0);
+        assert_eq!(r.steps.len(), 21, "应返回21步位置");
+        assert!(r.max_vertical_disp >= 0.0);
+        assert!(r.max_vertical_disp < 0.1,
+            "5m/s风速下最大位移应<100mm, 实际={}", r.max_vertical_disp);
+        assert!(matches!(r.overall_comfort, ComfortLevel::Comfortable),
+            "5m/s下应舒适, 实际={:?}", r.overall_comfort);
+        assert!(matches!(r.overall_danger, DangerLevel::Safe),
+            "5m/s下应安全, 实际={:?}", r.overall_danger);
+    }
+
+    #[test]
+    fn test_virtual_crossing_normal_moderate_wind() {
+        let result = VirtualCrossingExperience::simulate("BS001", 20.0, 0.0);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(r.max_vertical_disp > 0.001,
+            "20m/s风速下应有可感知的振动");
+        assert_eq!(r.steps.len(), 21);
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_steps_uniform_distribution() {
+        let result = VirtualCrossingExperience::simulate("BS001", 15.0, 0.0).unwrap();
+        for (i, step) in result.steps.iter().enumerate() {
+            let expected = i as f64 / (result.steps.len() - 1) as f64;
+            assert!((step.position_ratio - expected).abs() < 1e-9,
+                "位置应均匀分布: step {} 应为 {}, 实际 {}", i, expected, step.position_ratio);
+        }
+        assert!((result.steps.first().unwrap().position_ratio - 0.0).abs() < 1e-9,
+            "起点位置应为0");
+        assert!((result.steps.last().unwrap().position_ratio - 1.0).abs() < 1e-9,
+            "终点位置应为1");
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_midspan_max_displacement() {
+        let result = VirtualCrossingExperience::simulate("BS001", 25.0, 0.0).unwrap();
+        let mid_vert = result.steps[10].vertical_displacement.abs();
+        let start_vert = result.steps[0].vertical_displacement.abs();
+        let end_vert = result.steps.last().unwrap().vertical_displacement.abs();
+
+        assert!(mid_vert >= start_vert,
+            "跨中竖向位移应≥桥台处。跨中={}, 起点={}", mid_vert, start_vert);
+        assert!(mid_vert >= end_vert,
+            "跨中竖向位移应≥终点处。跨中={}, 终点={}", mid_vert, end_vert);
+
+        let mid_lat = result.steps[10].lateral_displacement.abs();
+        let start_lat = result.steps[0].lateral_displacement.abs();
+        assert!(mid_lat >= start_lat,
+            "跨中横向位移应≥桥台处");
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_near_critical_wind() {
+        let r_low = VirtualCrossingExperience::simulate("BS001", 10.0, 0.0).unwrap();
+        let r_high = VirtualCrossingExperience::simulate("BS001", 60.0, 0.0).unwrap();
+
+        assert!(r_high.max_acceleration > r_low.max_acceleration,
+            "高风速下最大加速度应更大。低速={}, 高速={}",
+            r_low.max_acceleration, r_high.max_acceleration);
+        assert!(r_high.max_vertical_disp > r_low.max_vertical_disp,
+            "高风速下最大位移应更大");
+
+        let comfort_order = |c: &ComfortLevel| -> u8 {
+            match c {
+                ComfortLevel::Comfortable => 0,
+                ComfortLevel::SlightlyUncomfortable => 1,
+                ComfortLevel::Uncomfortable => 2,
+                ComfortLevel::VeryUncomfortable => 3,
+                ComfortLevel::Intolerable => 4,
+            }
+        };
+        assert!(comfort_order(&r_high.overall_comfort) >= comfort_order(&r_low.overall_comfort),
+            "高风速下舒适度不应优于低风速");
+
+        let danger_order = |d: &DangerLevel| -> u8 {
+            match d {
+                DangerLevel::Safe => 0,
+                DangerLevel::Caution => 1,
+                DangerLevel::Dangerous => 2,
+                DangerLevel::Critical => 3,
+            }
+        };
+        assert!(danger_order(&r_high.overall_danger) >= danger_order(&r_low.overall_danger),
+            "高风速下危险等级不应低于低风速");
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_zero_wind() {
+        let result = VirtualCrossingExperience::simulate("BS001", 0.0, 0.0);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        for step in &r.steps {
+            assert!(step.vertical_displacement.is_finite(),
+                "零风速下位移不应为NaN/Inf");
+            assert!(!step.vertical_acceleration.is_nan());
+        }
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_extreme_wind() {
+        let result = VirtualCrossingExperience::simulate("BS001", 100.0, 5.0);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        for step in &r.steps {
+            assert!(step.vertical_displacement.is_finite(),
+                "极端风速下位移不应为NaN/Inf");
+            assert!(!step.vertical_acceleration.is_nan());
+        }
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_negative_attack_angle() {
+        let r_pos = VirtualCrossingExperience::simulate("BS001", 20.0, 5.0).unwrap();
+        let r_neg = VirtualCrossingExperience::simulate("BS001", 20.0, -5.0).unwrap();
+        assert!((r_pos.max_vertical_disp - r_neg.max_vertical_disp).abs() < 1.0,
+            "±5°攻角下最大位移量级应接近");
+    }
+
+    #[test]
+    fn test_virtual_crossing_boundary_acceleration_magnitude_with_wind() {
+        let winds = [5.0, 15.0, 25.0, 40.0];
+        let mut prev_max = -1.0_f64;
+        for w in &winds {
+            let r = VirtualCrossingExperience::simulate("BS001", *w, 0.0).unwrap();
+            assert!(r.max_acceleration >= prev_max || prev_max < 0.0,
+                "加速度应随风速增大而增大或保持。w={}, a={}, prev={}",
+                w, r.max_acceleration, prev_max);
+            prev_max = r.max_acceleration;
+        }
+    }
+
+    #[test]
+    fn test_virtual_crossing_anomaly_invalid_bridge() {
+        let result = VirtualCrossingExperience::simulate("INVALID_ID", 15.0, 0.0);
+        assert!(result.is_none(), "不存在的桥应返回None");
+    }
+
+    #[test]
+    fn test_virtual_crossing_principles_count() {
+        let r = VirtualCrossingExperience::simulate("BS001", 20.0, 0.0).unwrap();
+        assert!(r.wind_resistance_principles.len() >= 5,
+            "应包含至少5条抗风原理教学, 实际={}",
+            r.wind_resistance_principles.len());
+        for p in &r.wind_resistance_principles {
+            assert!(!p.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_virtual_crossing_all_steps_have_educational_notes() {
+        let r = VirtualCrossingExperience::simulate("BS001", 15.0, 0.0).unwrap();
+        for step in &r.steps {
+            assert!(!step.educational_note.is_empty(),
+                "每一步都应有教学注释, position={}", step.position_ratio);
+        }
+    }
+
+    #[test]
+    fn test_virtual_crossing_bridge_metadata() {
+        let r = VirtualCrossingExperience::simulate("BS001", 20.0, 0.0).unwrap();
+        assert!(!r.bridge_name.is_empty());
+        assert!(r.span > 0.0);
+        assert_eq!(r.attack_angle, 0.0);
     }
 }
