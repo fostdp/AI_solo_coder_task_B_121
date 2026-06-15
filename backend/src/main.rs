@@ -9,6 +9,10 @@ pub mod flutter_analyzer;
 pub mod shape_optimizer;
 pub mod alarm_mqtt;
 pub mod metrics;
+pub mod material_model;
+pub mod wind_resistant;
+pub mod code_compliance;
+pub mod virtual_crossing;
 
 use crate::dtu_receiver::DTUReceiver;
 use crate::flutter_analyzer::FlutterAnalyzer;
@@ -234,6 +238,10 @@ async fn main() -> std::io::Result<()> {
             .route("/api/v1/aerodynamics/recent/{id}", web::get().to(handlers::get_recent_aero_result))
             .route("/api/v1/aerodynamics/flutter-curve/{id}", web::get().to(handlers::get_flutter_curve))
             .route("/api/v1/optimization/run", web::post().to(handlers::run_optimization))
+            .route("/api/v1/materials/compare", web::get().to(handlers::compare_materials))
+            .route("/api/v1/wind-resistant/evaluate", web::get().to(handlers::evaluate_wind_resistant))
+            .route("/api/v1/code-compliance/check", web::get().to(handlers::check_code_compliance))
+            .route("/api/v1/virtual-crossing/simulate", web::get().to(handlers::virtual_crossing))
             .service(fs::Files::new("/", "/app/frontend").index_file("index.html"))
     })
     .bind((host.as_str(), port))?

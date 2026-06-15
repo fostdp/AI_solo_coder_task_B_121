@@ -54,6 +54,13 @@
         canvas { background: #0f172a; border-radius: 6px; display: block; }
         .optim-progress { height: 6px; background: #334155; border-radius: 3px; overflow: hidden; margin: 8px 0; }
         .optim-progress-bar { height: 100%; background: linear-gradient(90deg, #3b82f6, #22c55e); width: 0%; transition: width 0.3s ease; }
+        .feature-tabs { display: flex; gap: 2px; margin-bottom: 10px; }
+        .feature-tab { flex: 1; padding: 6px 4px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #64748b; font-size: 10px; cursor: pointer; text-align: center; transition: all 0.15s; }
+        .feature-tab:hover { background: #1e293b; color: #94a3b8; }
+        .feature-tab.active { background: #3b82f622; border-color: #3b82f655; color: #3b82f6; }
+        .feature-content { display: none; }
+        .feature-content.active { display: block; }
+        .feature-status { font-size: 10px; color: #64748b; margin-top: 6px; }
     </style>
 </head>
 <body>
@@ -110,6 +117,56 @@
             <div id="optim-status" style="font-size:11px;color:#94a3b8;margin-top:4px;"></div>
             <div id="optim-detail"></div>
         </div>
+        <div class="panel">
+            <div class="panel-title">🔬 新功能模块</div>
+            <div class="feature-tabs">
+                <div class="feature-tab active" data-tab="material">材料对比</div>
+                <div class="feature-tab" data-tab="windres">抗风措施</div>
+                <div class="feature-tab" data-tab="code">规范校核</div>
+                <div class="feature-tab" data-tab="crossing">虚拟过桥</div>
+            </div>
+            <div class="feature-content active" id="tab-material">
+                <button class="btn secondary" id="btn-material" style="width:100%;margin-bottom:8px;">🎋 缆索材料阻尼对比</button>
+                <canvas id="material-damping-chart" width="312" height="160"></canvas>
+                <canvas id="material-radar-chart" width="312" height="160" style="margin-top:8px;"></canvas>
+                <div id="material-table"></div>
+                <div class="feature-status" id="material-status"></div>
+            </div>
+            <div class="feature-content" id="tab-windres">
+                <button class="btn secondary" id="btn-wind-resistant" style="width:100%;margin-bottom:8px;">🛡️ 抗风措施效果评估</button>
+                <canvas id="windres-chart" width="312" height="160"></canvas>
+                <div id="windres-table" style="margin-top:8px;"></div>
+                <div class="feature-status" id="windres-status"></div>
+            </div>
+            <div class="feature-content" id="tab-code">
+                <button class="btn secondary" id="btn-code-check" style="width:100%;margin-bottom:8px;">📋 现代规范适用性校核</button>
+                <canvas id="code-chart" width="312" height="180"></canvas>
+                <div id="code-table" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
+                <div class="feature-status" id="code-status"></div>
+            </div>
+            <div class="feature-content" id="tab-crossing">
+                <div style="margin-bottom:8px;">
+                    <div class="control-row">
+                        <label style="font-size:11px;">风速</label>
+                        <input type="range" id="crossing-wind-slider" min="0" max="50" step="0.5" value="15" style="flex:1;">
+                        <span class="value" id="crossing-wind-val" style="font-size:11px;">15.0 m/s</span>
+                    </div>
+                    <div class="control-row">
+                        <label style="font-size:11px;">攻角</label>
+                        <input type="range" id="crossing-angle-slider" min="-10" max="10" step="0.5" value="0" style="flex:1;">
+                        <span class="value" id="crossing-angle-val" style="font-size:11px;">0.0°</span>
+                    </div>
+                </div>
+                <button class="btn secondary" id="btn-virtual-crossing" style="width:100%;margin-bottom:8px;">🚶 开始虚拟过桥体验</button>
+                <canvas id="crossing-canvas" width="312" height="220"></canvas>
+                <div style="margin-top:6px;">
+                    <div style="font-size:12px;font-weight:600;" id="crossing-bridge-name"></div>
+                    <div id="crossing-summary" style="margin-top:4px;"></div>
+                </div>
+                <div id="crossing-principles" style="margin-top:8px;max-height:120px;overflow-y:auto;"></div>
+                <div class="feature-status" id="crossing-status"></div>
+            </div>
+        </div>
     </div>
     <div id="main-area">
         <div id="canvas-container"></div>
@@ -143,5 +200,16 @@
 </div>
 <script src="cable_bridge_3d.js"></script>
 <script src="flutter_panel.js"></script>
+<script src="feature_panels.js"></script>
+<script>
+document.querySelectorAll('.feature-tab').forEach(tab => {
+    tab.onclick = function() {
+        document.querySelectorAll('.feature-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.feature-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    };
+});
+</script>
 </body>
 </html>

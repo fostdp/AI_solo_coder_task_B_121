@@ -252,3 +252,83 @@ pub async fn get_flutter_curve(
         Err(e) => HttpResponse::NotFound().json(ApiResponse::<Vec<(f64, f64)>>::err(&e)),
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct MaterialComparisonQuery {
+    pub bridge_id: String,
+    pub wind_speed: f64,
+    pub attack_angle: Option<f64>,
+}
+
+pub async fn compare_materials(
+    query: web::Query<MaterialComparisonQuery>,
+) -> HttpResponse {
+    let attack_angle = query.attack_angle.unwrap_or(0.0);
+    match crate::material_model::MaterialComparisonResult::compute(
+        &query.bridge_id, query.wind_speed, attack_angle
+    ) {
+        Some(result) => HttpResponse::Ok().json(ApiResponse::ok(result)),
+        None => HttpResponse::NotFound().json(ApiResponse::<serde_json::Value>::err("Bridge not found")),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WindResistantQuery {
+    pub bridge_id: String,
+    pub wind_speed: f64,
+    pub attack_angle: Option<f64>,
+}
+
+pub async fn evaluate_wind_resistant(
+    query: web::Query<WindResistantQuery>,
+) -> HttpResponse {
+    let attack_angle = query.attack_angle.unwrap_or(0.0);
+    match crate::wind_resistant::WindResistantEvaluation::evaluate_bridge(
+        &query.bridge_id, query.wind_speed, attack_angle
+    ) {
+        Some(result) => HttpResponse::Ok().json(ApiResponse::ok(result)),
+        None => HttpResponse::NotFound().json(ApiResponse::<serde_json::Value>::err("Bridge not found")),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CodeComplianceQuery {
+    pub bridge_id: String,
+    pub wind_speed: Option<f64>,
+}
+
+pub async fn check_code_compliance(
+    query: web::Query<CodeComplianceQuery>,
+) -> HttpResponse {
+    let wind_speed = query.wind_speed.unwrap_or_else(|| {
+        crate::models::BRIDGES.iter()
+            .find(|b| b.bridge_id == query.bridge_id)
+            .map(|b| b.design_wind_speed)
+            .unwrap_or(30.0)
+    });
+    match crate::code_compliance::CodeComplianceResult::evaluate(
+        &query.bridge_id, wind_speed
+    ) {
+        Some(result) => HttpResponse::Ok().json(ApiResponse::ok(result)),
+        None => HttpResponse::NotFound().json(ApiResponse::<serde_json::Value>::err("Bridge not found")),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VirtualCrossingQuery {
+    pub bridge_id: String,
+    pub wind_speed: f64,
+    pub attack_angle: Option<f64>,
+}
+
+pub async fn virtual_crossing(
+    query: web::Query<VirtualCrossingQuery>,
+) -> HttpResponse {
+    let attack_angle = query.attack_angle.unwrap_or(0.0);
+    match crate::virtual_crossing::VirtualCrossingExperience::simulate(
+        &query.bridge_id, query.wind_speed, attack_angle
+    ) {
+        Some(result) => HttpResponse::Ok().json(ApiResponse::ok(result)),
+        None => HttpResponse::NotFound().json(ApiResponse::<serde_json::Value>::err("Bridge not found")),
+    }
+}
