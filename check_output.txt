@@ -1,0 +1,51 @@
+﻿cargo : warning: unused import: `oneshot`
+所在位置 行:1 字符: 89
++ ... d:\SOLO-2\AI_solo_coder_task_B_121\backend ; cargo check 2>&1 | Out-F ...
++                                                  ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unused import: `oneshot` 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ --> src\flutter_analyzer.rs:8:25
+  |
+8 | use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+  |                         ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `database` is never read
+ --> src\influxdb_storage.rs:9:16
+  |
+7 | pub struct InfluxDBStorage {
+  |            --------------- field in this struct
+8 |     pub(crate) client: Client,
+9 |     pub(crate) database: String,
+  |                ^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `storage` is never read
+  --> src\dtu_receiver.rs:10:5
+   |
+ 9 | pub struct DTUReceiver {
+   |            ----------- field in this struct
+10 |     storage: Arc<InfluxDBStorage>,
+   |     ^^^^^^^
+
+warning: field `mqtt_service` is never read
+  --> src\alarm_mqtt.rs:10:5
+   |
+ 8 | pub struct AlarmService {
+   |            ------------ field in this struct
+ 9 |     alert_manager: AlertManager,
+10 |     mqtt_service: Arc<MQTTAlertService>,
+   |     ^^^^^^^^^^^^
+
+warning: `bridge_monitoring_backend` (bin "bridge_monitoring_backend") generate
+d 4 warnings (run `cargo fix --bin "bridge_monitoring_backend" -p bridge_monito
+ring_backend` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.49s
+warning: the following packages contain code that will be rejected by a future 
+version of Rust: influxdb v0.7.2
+note: to see what the problems were, use the option `--future-incompat-report`,
+ or run `cargo report future-incompatibilities --id 1`

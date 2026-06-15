@@ -40,6 +40,9 @@ rand_distr = "0.4"
 statrs = "0.16"
 nalgebra = "0.32"
 
+# Thread pool for CPU-intensive work
+rayon = "1.8"
+
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"

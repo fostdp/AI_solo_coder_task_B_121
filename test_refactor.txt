@@ -1,0 +1,138 @@
+﻿cargo :    Compiling crossbeam-utils v0.8.21
+所在位置 行:1 字符: 89
++ ...  d:\SOLO-2\AI_solo_coder_task_B_121\backend ; cargo test 2>&1 | Out-F ...
++                                                   ~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling crossbeam-utils v0.8 
+   .21:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling either v1.16.0
+   Compiling crossbeam-epoch v0.9.18
+   Compiling crossbeam-deque v0.8.6
+   Compiling rayon-core v1.13.0
+   Compiling rayon v1.12.0
+   Compiling bridge_monitoring_backend v1.0.0 (D:\SOLO-2\AI_solo_coder_task_B_1
+21\backend)
+warning: unused import: `oneshot`
+ --> src\flutter_analyzer.rs:8:25
+  |
+8 | use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+  |                         ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `database` is never read
+ --> src\influxdb_storage.rs:9:16
+  |
+7 | pub struct InfluxDBStorage {
+  |            --------------- field in this struct
+8 |     pub(crate) client: Client,
+9 |     pub(crate) database: String,
+  |                ^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `storage` is never read
+  --> src\dtu_receiver.rs:10:5
+   |
+ 9 | pub struct DTUReceiver {
+   |            ----------- field in this struct
+10 |     storage: Arc<InfluxDBStorage>,
+   |     ^^^^^^^
+
+warning: field `mqtt_service` is never read
+  --> src\alarm_mqtt.rs:10:5
+   |
+ 8 | pub struct AlarmService {
+   |            ------------ field in this struct
+ 9 |     alert_manager: AlertManager,
+10 |     mqtt_service: Arc<MQTTAlertService>,
+   |     ^^^^^^^^^^^^
+
+warning: `bridge_monitoring_backend` (bin "bridge_monitoring_backend" test) gen
+erated 4 warnings (run `cargo fix --bin "bridge_monitoring_backend" -p bridge_m
+onitoring_backend --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.74s
+warning: the following packages contain code that will be rejected by a future 
+version of Rust: influxdb v0.7.2
+note: to see what the problems were, use the option `--future-incompat-report`,
+ or run `cargo report future-incompatibilities --id 1`
+     Running unittests src\main.rs (target\debug\deps\bridge_monitoring_backend
+-c9d2a9a4c585cf1b.exe)
+
+running 72 tests
+test code_checker::tests::test_code_compliance_boundary_very_low_wind ... ok
+test code_checker::tests::test_code_compliance_boundary_en1991_frequency_fails ... ok
+test code_checker::tests::test_code_compliance_boundary_bs5400_damping_passes ... ok
+test code_checker::tests::test_code_compliance_boundary_high_wind_reduces_safety_factor ... ok
+test code_checker::tests::test_code_compliance_all_bridges ... ok
+test code_checker::tests::test_code_compliance_boundary_cjj69_frequency_fails ... ok
+test code_checker::tests::test_code_compliance_boundary_wind_equals_critical ... ok
+test code_checker::tests::test_code_compliance_normal_bs001 ... ok
+test code_checker::tests::test_code_compliance_overall_safety_factor_is_minimum ... ok
+test code_checker::tests::test_code_compliance_overall_compliant_all_passed ... ok
+test code_checker::tests::test_crowd_load_correction_factor_less_than_one ... ok
+test code_checker::tests::test_crowd_load_correction_in_result ... ok
+test code_checker::tests::test_crowd_load_correction_values_reasonable ... ok
+test code_checker::tests::test_design_code_display_names ... ok
+test material_damper::tests::test_cable_material_physical_properties ... ok
+test material_damper::tests::test_cable_material_structural_damping_values ... ok
+test code_checker::tests::test_code_compliance_anomaly_invalid_bridge ... ok
+test code_checker::tests::test_design_code_all_variants ... ok
+test material_damper::tests::test_compute_with_env_differs_from_default ... ok
+test material_damper::tests::test_damping_database_has_data_points ... ok
+test material_damper::tests::test_interpolation_damping_humidity_effect ... ok
+test material_damper::tests::test_interpolation_boundary_out_of_range ... ok
+test material_damper::tests::test_material_all_contains_three ... ok
+test material_damper::tests::test_interpolation_modulus_temperature_effect ... ok
+test material_damper::tests::test_material_comparison_boundary_small_span ... ok
+test material_damper::tests::test_interpolation_damping_temperature_effect ... ok
+test material_damper::tests::test_material_comparison_normal ... ok
+test material_damper::tests::test_material_damping_profile_boundary_wind_zero ... ok
+test material_damper::tests::test_material_damping_profile_boundary_extreme_wind ... ok
+test material_damper::tests::test_material_comparison_anomaly_invalid_bridge ... ok
+test material_damper::tests::test_material_display_name ... ok
+test material_damper::tests::test_material_damping_profile_boundary_large_attack_angle ... ok
+test vr_bridge_experience::tests::test_anti_dizziness_balanced_mode ... ok
+test material_damper::tests::test_material_damping_profile_normal_case ... ok
+test vr_bridge_experience::tests::test_anti_dizziness_none_vs_strong ... ok
+test vr_bridge_experience::tests::test_anti_dizziness_stabilization_factors ... ok
+test vr_bridge_experience::tests::test_comfort_level_display_names ... ok
+test vr_bridge_experience::tests::test_compute_effective_displacement_clamp ... ok
+test vr_bridge_experience::tests::test_danger_level_display_names ... ok
+test vr_bridge_experience::tests::test_display_displacement_always_leq_raw ... ok
+test vr_bridge_experience::tests::test_no_protection_raw_equals_display ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_all_steps_have_educational_notes ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_anomaly_invalid_bridge ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_extreme_wind ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_midspan_max_displacement ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_acceleration_magnitude_with_wind ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_near_critical_wind ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_negative_attack_angle ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_steps_uniform_distribution ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_boundary_zero_wind ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_bridge_metadata ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_normal_low_wind ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_normal_moderate_wind ... ok
+test vr_bridge_experience::tests::test_virtual_crossing_principles_count ... ok
+test wind_cable_evaluator::tests::test_amplitude_reduction_ratio_greater_than_one ... ok
+test wind_cable_evaluator::tests::test_ballast_config_zero_cable_fields ... ok
+test wind_cable_evaluator::tests::test_ballast_increases_damping ... ok
+test wind_cable_evaluator::tests::test_cable_slack_low_tension_high_wind ... ok
+test wind_cable_evaluator::tests::test_combined_measure_is_best ... ok
+test wind_cable_evaluator::tests::test_cable_no_slack_sufficient_tension ... ok
+test wind_cable_evaluator::tests::test_slack_reduces_stiffness_vs_taut ... ok
+test wind_cable_evaluator::tests::test_safety_factor_improvement_after_measures ... ok
+test wind_cable_evaluator::tests::test_critical_speed_increase_greater_than_one ... ok
+test wind_cable_evaluator::tests::test_wind_cable_angle_90_boundary ... ok
+test wind_cable_evaluator::tests::test_wind_cable_angle_zero_boundary ... ok
+test wind_cable_evaluator::tests::test_wind_cable_increases_lateral_stiffness ... ok
+test wind_cable_evaluator::tests::test_wind_cable_count_monotonic_increase ... ok
+test wind_cable_evaluator::tests::test_wind_resistant_evaluation_anomaly_invalid_bridge ... ok
+test wind_cable_evaluator::tests::test_wind_resistant_evaluation_boundary_low_wind ... ok
+test wind_cable_evaluator::tests::test_wind_resistant_evaluation_normal ... ok
+test wind_cable_evaluator::tests::test_wind_resistant_measure_all_variants ... ok
+test wind_cable_evaluator::tests::test_wind_resistant_measure_display_names ... ok
+
+test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

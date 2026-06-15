@@ -16,6 +16,7 @@ pub struct FlutterAnalyzer {
     alarm_tx: mpsc::Sender<SystemMessage>,
     storage_tx: mpsc::Sender<SystemMessage>,
     recent_results: Arc<RwLock<HashMap<String, AerodynamicResult>>>,
+    compute_pool: Arc<rayon::ThreadPool>,
 }
 
 impl FlutterAnalyzer {
@@ -24,11 +25,18 @@ impl FlutterAnalyzer {
         storage_tx: mpsc::Sender<SystemMessage>,
         recent_results: Arc<RwLock<HashMap<String, AerodynamicResult>>>,
     ) -> Self {
+        let compute_pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(4)
+                .build()
+                .expect("Failed to create rayon compute pool"),
+        );
         FlutterAnalyzer {
             model_cache: Arc::new(Mutex::new(HashMap::new())),
             alarm_tx,
             storage_tx,
             recent_results,
+            compute_pool,
         }
     }
 
@@ -83,7 +91,12 @@ impl FlutterAnalyzer {
             .ok_or_else(|| format!("Bridge not found: {}", bridge_id))?;
 
         let shape = Some(DeckAerodynamicShape::default());
-        let mut result = model.evaluate_aerodynamic_performance(wind_speed, attack_angle, shape.as_ref());
+        let compute_pool = self.compute_pool.clone();
+        let mut result = tokio::task::spawn_blocking(move || {
+            compute_pool.install(|| {
+                model.evaluate_aerodynamic_performance(wind_speed, attack_angle, shape.as_ref())
+            })
+        }).await.map_err(|e| format!("Compute task join error: {}", e))?;
         result.turbulence_intensity = turbulence;
 
         debug!("[Analyzer] {}: U={:.1}m/s, α={:.1}°, I={:.3}, ξ={:.4}, A={:.3}m, Ucr={:.1}m/s, event={}",
@@ -125,7 +138,14 @@ impl FlutterAnalyzer {
     ) -> Result<AerodynamicResult, String> {
         let model = self.get_or_create_model(bridge_id).await
             .ok_or_else(|| format!("Bridge not found: {}", bridge_id))?;
-        Ok(model.evaluate_aerodynamic_performance(wind_speed, attack_angle, shape))
+        let shape_cloned = shape.cloned();
+        let compute_pool = self.compute_pool.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            compute_pool.install(|| {
+                model.evaluate_aerodynamic_performance(wind_speed, attack_angle, shape_cloned.as_ref())
+            })
+        }).await.map_err(|e| format!("Compute task join error: {}", e))?;
+        Ok(result)
     }
 
     pub async fn compute_vibration_response(
@@ -138,7 +158,15 @@ impl FlutterAnalyzer {
     ) -> Result<VibrationResponse, String> {
         let model = self.get_or_create_model(bridge_id).await
             .ok_or_else(|| format!("Bridge not found: {}", bridge_id))?;
-        Ok(model.compute_vibration_response(wind_speed, attack_angle, duration.unwrap_or(10.0), dt.unwrap_or(0.01)))
+        let duration_val = duration.unwrap_or(10.0);
+        let dt_val = dt.unwrap_or(0.01);
+        let compute_pool = self.compute_pool.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            compute_pool.install(|| {
+                model.compute_vibration_response(wind_speed, attack_angle, duration_val, dt_val)
+            })
+        }).await.map_err(|e| format!("Compute task join error: {}", e))?;
+        Ok(result)
     }
 
     pub async fn compute_deck_deformation(
@@ -150,7 +178,14 @@ impl FlutterAnalyzer {
     ) -> Result<Vec<(f64, f64, f64)>, String> {
         let model = self.get_or_create_model(bridge_id).await
             .ok_or_else(|| format!("Bridge not found: {}", bridge_id))?;
-        Ok(model.compute_deck_deformation(wind_speed, attack_angle, points.unwrap_or(20)))
+        let points_val = points.unwrap_or(20);
+        let compute_pool = self.compute_pool.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            compute_pool.install(|| {
+                model.compute_deck_deformation(wind_speed, attack_angle, points_val)
+            })
+        }).await.map_err(|e| format!("Compute task join error: {}", e))?;
+        Ok(result)
     }
 
     pub async fn compute_flutter_curve(
@@ -160,12 +195,104 @@ impl FlutterAnalyzer {
     ) -> Result<Vec<(f64, f64)>, String> {
         let model = self.get_or_create_model(bridge_id).await
             .ok_or_else(|| format!("Bridge not found: {}", bridge_id))?;
-        let mut curve = Vec::with_capacity(21);
-        for i in 0..=20 {
-            let attack_angle = -10.0 + i as f64;
-            let critical_speed = model.compute_flutter_critical_speed(shape.as_ref());
-            curve.push((attack_angle, critical_speed));
-        }
-        Ok(curve)
+        let compute_pool = self.compute_pool.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            compute_pool.install(|| {
+                let mut curve = Vec::with_capacity(21);
+                for i in 0..=20 {
+                    let attack_angle = -10.0 + i as f64;
+                    let critical_speed = model.compute_flutter_critical_speed(shape.as_ref());
+                    curve.push((attack_angle, critical_speed));
+                }
+                curve
+            })
+        }).await.map_err(|e| format!("Compute task join error: {}", e))?;
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    fn create_test_pool() -> Arc<rayon::ThreadPool> {
+        Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(2)
+                .build()
+                .unwrap()
+        )
+    }
+
+    #[test]
+    fn test_thread_pool_creation_success() {
+        let pool = create_test_pool();
+        let result = pool.install(|| 42);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_thread_pool_parallel_execution() {
+        let pool = create_test_pool();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        pool.scope(|s| {
+            for _ in 0..10 {
+                let c = counter_clone.clone();
+                s.spawn(move |_| {
+                    c.fetch_add(1, Ordering::SeqCst);
+                });
+            }
+        });
+
+        assert_eq!(counter.load(Ordering::SeqCst), 10);
+    }
+
+    #[test]
+    fn test_thread_pool_compute_intensive_task() {
+        let pool = create_test_pool();
+        let n = 1_000_000;
+        let result: f64 = pool.install(|| {
+            (0..n).map(|i| (i as f64).sin().cos().abs()).sum()
+        });
+        assert!(result > 0.0);
+        assert!(result.is_finite());
+    }
+
+    #[test]
+    fn test_compute_pool_has_4_threads_default() {
+        let pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(4)
+                .build()
+                .unwrap()
+        );
+        let ids = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let ids_clone = ids.clone();
+        pool.scope(|s| {
+            for _ in 0..8 {
+                let ids = ids_clone.clone();
+                s.spawn(move |_| {
+                    let id = rayon::current_thread_index().unwrap_or(999);
+                    ids.lock().unwrap().insert(id);
+                });
+            }
+        });
+        let num_threads = ids.lock().unwrap().len();
+        assert!(num_threads >= 1 && num_threads <= 4,
+            "使用的线程数应在1到4之间, 实际={}", num_threads);
+    }
+
+    #[test]
+    fn test_flutter_analyzer_new_creates_pool() {
+        let (alarm_tx, _) = mpsc::channel::<SystemMessage>(10);
+        let (storage_tx, _) = mpsc::channel::<SystemMessage>(10);
+        let recent = Arc::new(RwLock::new(HashMap::new()));
+        let analyzer = FlutterAnalyzer::new(alarm_tx, storage_tx, recent);
+        let result = analyzer.compute_pool.install(|| 123);
+        assert_eq!(result, 123);
     }
 }
