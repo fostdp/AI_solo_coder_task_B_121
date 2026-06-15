@@ -36,6 +36,7 @@ pub struct WindResistantConfig {
     pub wind_cable_count: usize,
     pub wind_cable_diameter_mm: f64,
     pub wind_cable_angle_deg: f64,
+    pub wind_cable_initial_tension_kn: f64,
     pub ballast_weight_kg_per_m: f64,
     pub ballast_position_ratio: f64,
 }
@@ -48,6 +49,7 @@ impl WindResistantConfig {
                 wind_cable_count: 4,
                 wind_cable_diameter_mm: 25.0,
                 wind_cable_angle_deg: 30.0,
+                wind_cable_initial_tension_kn: 30.0,
                 ballast_weight_kg_per_m: 0.0,
                 ballast_position_ratio: 0.0,
             },
@@ -56,6 +58,7 @@ impl WindResistantConfig {
                 wind_cable_count: 0,
                 wind_cable_diameter_mm: 0.0,
                 wind_cable_angle_deg: 0.0,
+                wind_cable_initial_tension_kn: 0.0,
                 ballast_weight_kg_per_m: 200.0,
                 ballast_position_ratio: 0.5,
             },
@@ -64,6 +67,7 @@ impl WindResistantConfig {
                 wind_cable_count: 4,
                 wind_cable_diameter_mm: 25.0,
                 wind_cable_angle_deg: 30.0,
+                wind_cable_initial_tension_kn: 30.0,
                 ballast_weight_kg_per_m: 200.0,
                 ballast_position_ratio: 0.5,
             },
@@ -83,6 +87,8 @@ pub struct WindResistantEffect {
     pub safety_factor_before: f64,
     pub safety_factor_after: f64,
     pub effectiveness_score: f64,
+    pub cable_slack_ratio: f64,
+    pub cable_effective_stiffness_ratio: f64,
 }
 
 impl WindResistantEffect {
@@ -102,24 +108,47 @@ impl WindResistantEffect {
         let mut damping_delta = 0.0_f64;
         let mut lat_stiff_ratio = 1.0_f64;
         let mut torsion_freq_ratio = 1.0_f64;
+        let mut cable_slack_ratio = 0.0_f64;
+        let mut cable_effective_stiffness_ratio = 1.0_f64;
 
         if config.wind_cable_count > 0 {
             let cable_area = PI * (config.wind_cable_diameter_mm / 2000.0).powi(2);
             let cable_e = 180e9;
             let cable_ea = cable_area * cable_e * config.wind_cable_count as f64;
             let angle_rad = config.wind_cable_angle_deg.to_radians();
-            let horizontal_stiffness = cable_ea * angle_rad.cos().powi(2) / (span * 0.5);
+
+            let initial_tension_n = config.wind_cable_initial_tension_kn * 1000.0;
+            let cable_length = span * 0.5 / angle_rad.cos().max(0.1);
+            let _cable_sag = initial_tension_n / (cable_ea / cable_length);
+            let wind_induced_force = 0.5 * 1.225 * wind_speed.powi(2) * width * 0.5;
+            let required_tension = wind_induced_force / (config.wind_cable_count as f64 * angle_rad.cos().max(0.01));
+
+            let tension_ratio = if required_tension > 0.0 { initial_tension_n / required_tension } else { 10.0 };
+
+            if tension_ratio < 1.0 {
+                cable_slack_ratio = 1.0 - tension_ratio;
+                let slack_penalty = tension_ratio.powi(2);
+                cable_effective_stiffness_ratio = slack_penalty;
+            } else {
+                cable_slack_ratio = 0.0;
+                cable_effective_stiffness_ratio = 1.0;
+            }
+
+            let effective_ea = cable_ea * cable_effective_stiffness_ratio;
+
+            let horizontal_stiffness = effective_ea * angle_rad.cos().powi(2) / (span * 0.5);
             let deck_mass_per_m = width * 0.5 * 7850.0;
             let omega_h = 2.0 * PI * 1.2 * (g / span).sqrt();
             let deck_lateral_stiffness = deck_mass_per_m * omega_h.powi(2);
             lat_stiff_ratio = 1.0 + horizontal_stiffness / deck_lateral_stiffness;
 
-            let vertical_component = cable_ea * angle_rad.sin().powi(2) / (span * 0.5);
+            let vertical_component = effective_ea * angle_rad.sin().powi(2) / (span * 0.5);
             let omega_alpha = 2.0 * PI * 1.2 * (g / span).sqrt() * 2.5;
             let torsional_stiffness = deck_mass_per_m * width.powi(2) / 12.0 * omega_alpha.powi(2);
             torsion_freq_ratio = (1.0 + vertical_component * width / torsional_stiffness).sqrt();
 
-            let cable_damping = 0.002 * config.wind_cable_count as f64 * angle_rad.sin();
+            let cable_damping = 0.002 * config.wind_cable_count as f64 * angle_rad.sin()
+                * cable_effective_stiffness_ratio;
             damping_delta += cable_damping;
         }
 
@@ -163,6 +192,8 @@ impl WindResistantEffect {
             safety_factor_before: sf_before,
             safety_factor_after: sf_after,
             effectiveness_score: effectiveness,
+            cable_slack_ratio,
+            cable_effective_stiffness_ratio,
         }
     }
 }
@@ -297,11 +328,13 @@ mod tests {
         let cfg_none = WindResistantConfig {
             measure: WindResistantMeasure::Ballast,
             wind_cable_count: 0, wind_cable_diameter_mm: 0.0, wind_cable_angle_deg: 0.0,
+            wind_cable_initial_tension_kn: 0.0,
             ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
         };
         let cfg_heavy = WindResistantConfig {
             measure: WindResistantMeasure::Ballast,
             wind_cable_count: 0, wind_cable_diameter_mm: 0.0, wind_cable_angle_deg: 0.0,
+            wind_cable_initial_tension_kn: 0.0,
             ballast_weight_kg_per_m: 500.0, ballast_position_ratio: 0.5,
         };
 
@@ -358,6 +391,7 @@ mod tests {
         let cfg_horiz = WindResistantConfig {
             measure: WindResistantMeasure::WindCable,
             wind_cable_count: 4, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 0.0,
+            wind_cable_initial_tension_kn: 30.0,
             ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
         };
         let eff = WindResistantEffect::evaluate(&cfg_horiz, 100.0, 2.8, 14.5, 20.0, 0.01, 45.0, 0.05);
@@ -370,6 +404,7 @@ mod tests {
         let cfg_vert = WindResistantConfig {
             measure: WindResistantMeasure::WindCable,
             wind_cable_count: 4, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 90.0,
+            wind_cable_initial_tension_kn: 30.0,
             ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
         };
         let eff = WindResistantEffect::evaluate(&cfg_vert, 100.0, 2.8, 14.5, 20.0, 0.01, 45.0, 0.05);
@@ -381,11 +416,13 @@ mod tests {
         let count_zero = WindResistantConfig {
             measure: WindResistantMeasure::WindCable,
             wind_cable_count: 0, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 30.0,
+            wind_cable_initial_tension_kn: 0.0,
             ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
         };
         let count_eight = WindResistantConfig {
             measure: WindResistantMeasure::WindCable,
             wind_cable_count: 8, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 30.0,
+            wind_cable_initial_tension_kn: 30.0,
             ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
         };
         let eff0 = WindResistantEffect::evaluate(&count_zero, 100.0, 2.8, 14.5, 20.0, 0.01, 45.0, 0.05);
@@ -432,5 +469,63 @@ mod tests {
         for e in &r.effects {
             assert!(e.safety_factor_after.is_finite() && !e.safety_factor_after.is_nan());
         }
+    }
+
+    #[test]
+    fn test_cable_slack_low_tension_high_wind() {
+        let cfg_slack = WindResistantConfig {
+            measure: WindResistantMeasure::WindCable,
+            wind_cable_count: 2, wind_cable_diameter_mm: 10.0, wind_cable_angle_deg: 30.0,
+            wind_cable_initial_tension_kn: 0.5,
+            ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
+        };
+        let eff = WindResistantEffect::evaluate(&cfg_slack, 100.0, 2.8, 14.5, 60.0, 0.01, 45.0, 0.05);
+        assert!(eff.cable_slack_ratio > 0.0,
+            "初始张力极低且高风速时松弛比应>0, 实际={}", eff.cable_slack_ratio);
+        assert!(eff.cable_effective_stiffness_ratio < 1.0,
+            "松弛缆索有效刚度比应<1, 实际={}", eff.cable_effective_stiffness_ratio);
+    }
+
+    #[test]
+    fn test_cable_no_slack_sufficient_tension() {
+        let cfg_taut = WindResistantConfig {
+            measure: WindResistantMeasure::WindCable,
+            wind_cable_count: 4, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 30.0,
+            wind_cable_initial_tension_kn: 100.0,
+            ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
+        };
+        let eff = WindResistantEffect::evaluate(&cfg_taut, 100.0, 2.8, 14.5, 10.0, 0.01, 45.0, 0.05);
+        assert!((eff.cable_slack_ratio - 0.0).abs() < 1e-9,
+            "充足初始张力低风速下松弛比应为0, 实际={}", eff.cable_slack_ratio);
+        assert!((eff.cable_effective_stiffness_ratio - 1.0).abs() < 1e-9,
+            "无松弛时有效刚度比应为1, 实际={}", eff.cable_effective_stiffness_ratio);
+    }
+
+    #[test]
+    fn test_slack_reduces_stiffness_vs_taut() {
+        let cfg_taut = WindResistantConfig {
+            measure: WindResistantMeasure::WindCable,
+            wind_cable_count: 4, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 30.0,
+            wind_cable_initial_tension_kn: 50.0,
+            ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
+        };
+        let cfg_slack = WindResistantConfig {
+            measure: WindResistantMeasure::WindCable,
+            wind_cable_count: 4, wind_cable_diameter_mm: 25.0, wind_cable_angle_deg: 30.0,
+            wind_cable_initial_tension_kn: 1.0,
+            ballast_weight_kg_per_m: 0.0, ballast_position_ratio: 0.0,
+        };
+        let eff_taut = WindResistantEffect::evaluate(&cfg_taut, 100.0, 2.8, 14.5, 20.0, 0.01, 45.0, 0.05);
+        let eff_slack = WindResistantEffect::evaluate(&cfg_slack, 100.0, 2.8, 14.5, 20.0, 0.01, 45.0, 0.05);
+        assert!(eff_taut.lateral_stiffness_increase_ratio >= eff_slack.lateral_stiffness_increase_ratio,
+            "张紧风缆横向刚度应≥松弛风缆: taut={}, slack={}",
+            eff_taut.lateral_stiffness_increase_ratio, eff_slack.lateral_stiffness_increase_ratio);
+    }
+
+    #[test]
+    fn test_ballast_config_zero_cable_fields() {
+        let cfg = WindResistantConfig::default_for_measure(WindResistantMeasure::Ballast);
+        assert_eq!(cfg.wind_cable_initial_tension_kn, 0.0);
+        assert_eq!(cfg.wind_cable_count, 0);
     }
 }

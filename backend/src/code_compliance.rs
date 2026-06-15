@@ -55,6 +55,63 @@ pub struct CodeComplianceResult {
     pub overall_safety_factor: f64,
     pub applicability_note: String,
     pub ancient_bridge_specific_risks: Vec<String>,
+    pub ancient_crowd_load_correction: CrowdLoadCorrection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrowdLoadCorrection {
+    pub modern_design_load_kn_per_m2: f64,
+    pub ancient_crowd_density_persons_per_m2: f64,
+    pub modern_crowd_density_persons_per_m2: f64,
+    pub average_body_mass_kg: f64,
+    pub ancient_body_mass_kg: f64,
+    pub load_ratio: f64,
+    pub synchronization_factor_modern: f64,
+    pub synchronization_factor_ancient: f64,
+    pub effective_load_ratio: f64,
+    pub correction_factor: f64,
+    pub explanation: String,
+}
+
+impl CrowdLoadCorrection {
+    pub fn compute() -> Self {
+        let modern_load = 5.0;
+        let modern_density = 1.0;
+        let ancient_density = 0.6;
+        let modern_body_mass = 75.0;
+        let ancient_body_mass = 55.0;
+
+        let modern_load_kn = modern_density * modern_body_mass * 9.81 / 1000.0;
+        let ancient_load_kn = ancient_density * ancient_body_mass * 9.81 / 1000.0;
+        let load_ratio = ancient_load_kn / modern_load_kn;
+
+        let sync_modern = 0.6;
+        let sync_ancient = 0.35;
+        let effective_load_ratio = load_ratio * (sync_ancient / sync_modern);
+        let correction_factor = effective_load_ratio;
+
+        let explanation = format!(
+            "古代行人荷载修正: 人群密度{}人/m²(现代{}), 体重{}kg(现代{}kg), \
+             同步系数{}(现代{}), 综合修正系数={:.2}。\
+             古代桥面窄, 人群稀疏, 步频不统一(无列队行军), 同步激励远弱于现代工况。",
+            ancient_density, modern_density, ancient_body_mass, modern_body_mass,
+            sync_ancient, sync_modern, correction_factor
+        );
+
+        CrowdLoadCorrection {
+            modern_design_load_kn_per_m2: modern_load,
+            ancient_crowd_density_persons_per_m2: ancient_density,
+            modern_crowd_density_persons_per_m2: modern_density,
+            average_body_mass_kg: modern_body_mass,
+            ancient_body_mass_kg: ancient_body_mass,
+            load_ratio,
+            synchronization_factor_modern: sync_modern,
+            synchronization_factor_ancient: sync_ancient,
+            effective_load_ratio,
+            correction_factor,
+            explanation,
+        }
+    }
 }
 
 impl CodeComplianceResult {
@@ -196,6 +253,7 @@ impl CodeComplianceResult {
             overall_safety_factor: overall_sf,
             applicability_note: applicability,
             ancient_bridge_specific_risks: risks,
+            ancient_crowd_load_correction: CrowdLoadCorrection::compute(),
         })
     }
 }
@@ -344,5 +402,39 @@ mod tests {
             assert_eq!(r.checks.len(), 8);
             assert!(!r.ancient_bridge_specific_risks.is_empty());
         }
+    }
+
+    #[test]
+    fn test_crowd_load_correction_factor_less_than_one() {
+        let correction = CrowdLoadCorrection::compute();
+        assert!(correction.correction_factor > 0.0 && correction.correction_factor < 1.0,
+            "古代行人荷载修正系数应在(0,1)之间, 实际={:.3}", correction.correction_factor);
+        assert!(correction.ancient_body_mass_kg < correction.average_body_mass_kg,
+            "古人体重应小于现代人体重");
+        assert!(correction.ancient_crowd_density_persons_per_m2 < correction.modern_crowd_density_persons_per_m2,
+            "古代人群密度应小于现代");
+        assert!(correction.synchronization_factor_ancient < correction.synchronization_factor_modern,
+            "古代步频同步系数应小于现代");
+    }
+
+    #[test]
+    fn test_crowd_load_correction_in_result() {
+        let result = CodeComplianceResult::evaluate("BS001", 20.0).unwrap();
+        let c = &result.ancient_crowd_load_correction;
+        assert!(!c.explanation.is_empty(), "修正说明不应为空");
+        assert!(c.load_ratio > 0.0, "荷载比应为正");
+        assert!(c.effective_load_ratio > 0.0, "有效荷载比应为正");
+    }
+
+    #[test]
+    fn test_crowd_load_correction_values_reasonable() {
+        let c = CrowdLoadCorrection::compute();
+        let ancient_load = c.ancient_crowd_density_persons_per_m2 * c.ancient_body_mass_kg * 9.81 / 1000.0;
+        let modern_load = c.modern_crowd_density_persons_per_m2 * c.average_body_mass_kg * 9.81 / 1000.0;
+        assert!(ancient_load < modern_load,
+            "古代活载(kN/m²)应小于现代: ancient={:.3}, modern={:.3}", ancient_load, modern_load);
+        let expected_ratio = ancient_load / modern_load * (c.synchronization_factor_ancient / c.synchronization_factor_modern);
+        assert!((c.effective_load_ratio - expected_ratio).abs() < 1e-9,
+            "有效荷载比计算不一致");
     }
 }

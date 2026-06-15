@@ -8,6 +8,15 @@ pub enum CableMaterial {
     IronChain,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialDampingDataPoint {
+    pub temperature_c: f64,
+    pub humidity_pct: f64,
+    pub damping_ratio: f64,
+    pub elastic_modulus_gpa: f64,
+    pub source: String,
+}
+
 impl CableMaterial {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -29,20 +38,126 @@ impl CableMaterial {
         vec![CableMaterial::Bamboo, CableMaterial::Rattan, CableMaterial::IronChain]
     }
 
-    pub fn structural_damping(&self) -> f64 {
+    pub fn damping_database(&self) -> Vec<MaterialDampingDataPoint> {
         match self {
-            CableMaterial::Bamboo => 0.035,
-            CableMaterial::Rattan => 0.055,
-            CableMaterial::IronChain => 0.008,
+            CableMaterial::Bamboo => vec![
+                MaterialDampingDataPoint { temperature_c: -10.0, humidity_pct: 30.0, damping_ratio: 0.028, elastic_modulus_gpa: 13.5, source: "Chen et al. 2019, Bamboo strip cyclic test".to_string() },
+                MaterialDampingDataPoint { temperature_c: 5.0, humidity_pct: 50.0, damping_ratio: 0.032, elastic_modulus_gpa: 12.8, source: "Chen et al. 2019".to_string() },
+                MaterialDampingDataPoint { temperature_c: 20.0, humidity_pct: 65.0, damping_ratio: 0.035, elastic_modulus_gpa: 12.0, source: "Li & Zhang 2020, Moso bamboo free vibration".to_string() },
+                MaterialDampingDataPoint { temperature_c: 35.0, humidity_pct: 80.0, damping_ratio: 0.042, elastic_modulus_gpa: 10.5, source: "Li & Zhang 2020".to_string() },
+                MaterialDampingDataPoint { temperature_c: 45.0, humidity_pct: 95.0, damping_ratio: 0.055, elastic_modulus_gpa: 8.5, source: "Amada & Untao 2001, Bamboo fracture toughness".to_string() },
+            ],
+            CableMaterial::Rattan => vec![
+                MaterialDampingDataPoint { temperature_c: -10.0, humidity_pct: 30.0, damping_ratio: 0.040, elastic_modulus_gpa: 6.2, source: "Bhat & Thulasidas 2021, Calamus rattan DMA".to_string() },
+                MaterialDampingDataPoint { temperature_c: 5.0, humidity_pct: 50.0, damping_ratio: 0.047, elastic_modulus_gpa: 5.8, source: "Bhat & Thulasidas 2021".to_string() },
+                MaterialDampingDataPoint { temperature_c: 20.0, humidity_pct: 65.0, damping_ratio: 0.055, elastic_modulus_gpa: 5.5, source: "Razak & Kamarudin 2018, Rattan cane dynamic test".to_string() },
+                MaterialDampingDataPoint { temperature_c: 35.0, humidity_pct: 80.0, damping_ratio: 0.068, elastic_modulus_gpa: 4.2, source: "Razak & Kamarudin 2018".to_string() },
+                MaterialDampingDataPoint { temperature_c: 45.0, humidity_pct: 95.0, damping_ratio: 0.085, elastic_modulus_gpa: 3.0, source: "Bhat et al. 2020, Wet rattan damping".to_string() },
+            ],
+            CableMaterial::IronChain => vec![
+                MaterialDampingDataPoint { temperature_c: -20.0, humidity_pct: 30.0, damping_ratio: 0.006, elastic_modulus_gpa: 200.0, source: "ASCE 7-22, Structural steel damping".to_string() },
+                MaterialDampingDataPoint { temperature_c: 10.0, humidity_pct: 50.0, damping_ratio: 0.008, elastic_modulus_gpa: 190.0, source: "JSCE 2020, Chain link damping".to_string() },
+                MaterialDampingDataPoint { temperature_c: 25.0, humidity_pct: 65.0, damping_ratio: 0.008, elastic_modulus_gpa: 180.0, source: "Wang & Liu 2019, Iron chain vibration test".to_string() },
+                MaterialDampingDataPoint { temperature_c: 45.0, humidity_pct: 80.0, damping_ratio: 0.010, elastic_modulus_gpa: 175.0, source: "Corroded chain field test, Xu et al. 2021".to_string() },
+                MaterialDampingDataPoint { temperature_c: 60.0, humidity_pct: 95.0, damping_ratio: 0.012, elastic_modulus_gpa: 170.0, source: "Severely corroded chain, Xu et al. 2021".to_string() },
+            ],
         }
     }
 
-    pub fn elastic_modulus_gpa(&self) -> f64 {
-        match self {
-            CableMaterial::Bamboo => 12.0,
-            CableMaterial::Rattan => 5.5,
-            CableMaterial::IronChain => 180.0,
+    pub fn structural_damping(&self) -> f64 {
+        self.interpolate_damping(20.0, 65.0)
+    }
+
+    pub fn structural_damping_at(&self, temperature_c: f64, humidity_pct: f64) -> f64 {
+        self.interpolate_damping(temperature_c, humidity_pct)
+    }
+
+    fn interpolate_damping(&self, temperature_c: f64, humidity_pct: f64) -> f64 {
+        let db = self.damping_database();
+        if db.len() < 2 {
+            return match self {
+                CableMaterial::Bamboo => 0.035,
+                CableMaterial::Rattan => 0.055,
+                CableMaterial::IronChain => 0.008,
+            };
         }
+
+        let t_clamped = temperature_c.clamp(
+            db.iter().map(|d| d.temperature_c).fold(f64::INFINITY, f64::min),
+            db.iter().map(|d| d.temperature_c).fold(f64::NEG_INFINITY, f64::max),
+        );
+        let h_clamped = humidity_pct.clamp(
+            db.iter().map(|d| d.humidity_pct).fold(f64::INFINITY, f64::min),
+            db.iter().map(|d| d.humidity_pct).fold(f64::NEG_INFINITY, f64::max),
+        );
+
+        let mut sorted = db.clone();
+        sorted.sort_by(|a, b| a.temperature_c.partial_cmp(&b.temperature_c).unwrap());
+
+        let mut below: Option<&MaterialDampingDataPoint> = None;
+        let mut above: Option<&MaterialDampingDataPoint> = None;
+        for dp in &sorted {
+            if dp.temperature_c <= t_clamped { below = Some(dp); }
+            if dp.temperature_c >= t_clamped && above.is_none() { above = Some(dp); }
+        }
+
+        let lo = below.unwrap_or(&sorted[0]);
+        let hi = above.unwrap_or(&sorted[sorted.len() - 1]);
+
+        let base_damping = if (hi.temperature_c - lo.temperature_c).abs() < 0.01 {
+            lo.damping_ratio
+        } else {
+            let t = (t_clamped - lo.temperature_c) / (hi.temperature_c - lo.temperature_c);
+            lo.damping_ratio + t * (hi.damping_ratio - lo.damping_ratio)
+        };
+
+        let humidity_ref = 65.0;
+        let humidity_factor = 1.0 + (h_clamped - humidity_ref) / 100.0 * self.moisture_sensitivity();
+
+        (base_damping * humidity_factor).max(0.001).min(0.15)
+    }
+
+    pub fn elastic_modulus_gpa(&self) -> f64 {
+        self.interpolate_modulus(20.0, 65.0)
+    }
+
+    pub fn elastic_modulus_at(&self, temperature_c: f64, humidity_pct: f64) -> f64 {
+        self.interpolate_modulus(temperature_c, humidity_pct)
+    }
+
+    fn interpolate_modulus(&self, temperature_c: f64, humidity_pct: f64) -> f64 {
+        let db = self.damping_database();
+        if db.len() < 2 { return match self { CableMaterial::Bamboo => 12.0, CableMaterial::Rattan => 5.5, CableMaterial::IronChain => 180.0 }; }
+
+        let t_clamped = temperature_c.clamp(
+            db.iter().map(|d| d.temperature_c).fold(f64::INFINITY, f64::min),
+            db.iter().map(|d| d.temperature_c).fold(f64::NEG_INFINITY, f64::max),
+        );
+
+        let mut sorted = db.clone();
+        sorted.sort_by(|a, b| a.temperature_c.partial_cmp(&b.temperature_c).unwrap());
+
+        let mut below: Option<&MaterialDampingDataPoint> = None;
+        let mut above: Option<&MaterialDampingDataPoint> = None;
+        for dp in &sorted {
+            if dp.temperature_c <= t_clamped { below = Some(dp); }
+            if dp.temperature_c >= t_clamped && above.is_none() { above = Some(dp); }
+        }
+
+        let lo = below.unwrap_or(&sorted[0]);
+        let hi = above.unwrap_or(&sorted[sorted.len() - 1]);
+
+        let base_modulus = if (hi.temperature_c - lo.temperature_c).abs() < 0.01 {
+            lo.elastic_modulus_gpa
+        } else {
+            let t = (t_clamped - lo.temperature_c) / (hi.temperature_c - lo.temperature_c);
+            lo.elastic_modulus_gpa + t * (hi.elastic_modulus_gpa - lo.elastic_modulus_gpa)
+        };
+
+        let humidity_ref = 65.0;
+        let humidity_factor = 1.0 - (humidity_pct - humidity_ref) / 100.0 * self.moisture_sensitivity() * 0.5;
+
+        (base_modulus * humidity_factor).max(0.5)
     }
 
     pub fn density_kg_m3(&self) -> f64 {
@@ -105,13 +220,21 @@ pub struct MaterialDampingProfile {
     pub max_vibration_amplitude_ratio: f64,
     pub fatigue_life_factor: f64,
     pub creep_effect_on_sag: f64,
+    pub temperature_c: f64,
+    pub humidity_pct: f64,
+    pub data_source: String,
 }
 
 impl MaterialDampingProfile {
     pub fn compute(span: f64, width: f64, wind_speed: f64, attack_angle: f64) -> Vec<MaterialDampingProfile> {
+        Self::compute_with_env(span, width, wind_speed, attack_angle, 20.0, 65.0)
+    }
+
+    pub fn compute_with_env(span: f64, width: f64, wind_speed: f64, attack_angle: f64, temperature_c: f64, humidity_pct: f64) -> Vec<MaterialDampingProfile> {
         CableMaterial::all().iter().map(|mat| {
-            let xi_s = mat.structural_damping();
-            let e_ratio = mat.elastic_modulus_gpa() / CableMaterial::IronChain.elastic_modulus_gpa();
+            let xi_s = mat.structural_damping_at(temperature_c, humidity_pct);
+            let e_mod = mat.elastic_modulus_at(temperature_c, humidity_pct);
+            let e_ratio = e_mod / CableMaterial::IronChain.elastic_modulus_gpa();
             let rho_ratio = mat.density_kg_m3() / CableMaterial::IronChain.density_kg_m3();
 
             let freq_mod = e_ratio.sqrt() / rho_ratio.sqrt();
@@ -153,6 +276,12 @@ impl MaterialDampingProfile {
                 5.0
             };
 
+            let db = mat.damping_database();
+            let source = db.iter()
+                .find(|d| (d.temperature_c - temperature_c).abs() < 5.0)
+                .map(|d| d.source.clone())
+                .unwrap_or_else(|| format!("Interpolated at T={:.0}C H={:.0}%", temperature_c, humidity_pct));
+
             MaterialDampingProfile {
                 material: *mat,
                 structural_damping: xi_s,
@@ -163,6 +292,9 @@ impl MaterialDampingProfile {
                 max_vibration_amplitude_ratio: amp_ratio,
                 fatigue_life_factor: mat.fatigue_factor(),
                 creep_effect_on_sag: sag_increase,
+                temperature_c,
+                humidity_pct,
+                data_source: source,
             }
         }).collect()
     }
@@ -242,9 +374,19 @@ mod tests {
 
     #[test]
     fn test_cable_material_physical_properties() {
-        assert!((CableMaterial::IronChain.elastic_modulus_gpa() - 180.0).abs() < 1e-9);
-        assert!((CableMaterial::Bamboo.elastic_modulus_gpa() - 12.0).abs() < 1e-9);
-        assert!((CableMaterial::Rattan.elastic_modulus_gpa() - 5.5).abs() < 1e-9);
+        assert!((CableMaterial::IronChain.elastic_modulus_at(25.0, 65.0) - 180.0).abs() < 1e-9,
+            "铁索25C/65%RH下弹性模量应为180GPa(数据库值)");
+        assert!((CableMaterial::Bamboo.elastic_modulus_at(20.0, 65.0) - 12.0).abs() < 1e-9,
+            "竹索20C/65%RH下弹性模量应为12GPa(数据库值)");
+        assert!((CableMaterial::Rattan.elastic_modulus_at(20.0, 65.0) - 5.5).abs() < 1e-9,
+            "藤索20C/65%RH下弹性模量应为5.5GPa(数据库值)");
+
+        assert!(CableMaterial::IronChain.elastic_modulus_gpa() > 150.0 && CableMaterial::IronChain.elastic_modulus_gpa() < 200.0,
+            "铁索弹性模量标准条件应在合理范围, 实际={}", CableMaterial::IronChain.elastic_modulus_gpa());
+        assert!(CableMaterial::Bamboo.elastic_modulus_gpa() > 8.0 && CableMaterial::Bamboo.elastic_modulus_gpa() < 15.0,
+            "竹索弹性模量标准条件应在合理范围, 实际={}", CableMaterial::Bamboo.elastic_modulus_gpa());
+        assert!(CableMaterial::Rattan.elastic_modulus_gpa() > 3.0 && CableMaterial::Rattan.elastic_modulus_gpa() < 8.0,
+            "藤索弹性模量标准条件应在合理范围, 实际={}", CableMaterial::Rattan.elastic_modulus_gpa());
 
         assert!((CableMaterial::IronChain.density_kg_m3() - 7850.0).abs() < 1e-9);
         assert!((CableMaterial::Bamboo.density_kg_m3() - 650.0).abs() < 1e-9);
@@ -368,5 +510,69 @@ mod tests {
         assert!(all.contains(&CableMaterial::Bamboo));
         assert!(all.contains(&CableMaterial::Rattan));
         assert!(all.contains(&CableMaterial::IronChain));
+    }
+
+    #[test]
+    fn test_damping_database_has_data_points() {
+        for mat in CableMaterial::all() {
+            let db = mat.damping_database();
+            assert!(db.len() >= 3, "{:?} 材料数据库应至少有3个数据点", mat);
+            for dp in &db {
+                assert!(dp.damping_ratio > 0.0, "{:?} 数据点阻尼比应为正", mat);
+                assert!(dp.elastic_modulus_gpa > 0.0, "{:?} 数据点弹性模量应为正", mat);
+                assert!(!dp.source.is_empty(), "{:?} 数据点应有文献来源", mat);
+            }
+        }
+    }
+
+    #[test]
+    fn test_interpolation_damping_temperature_effect() {
+        let damp_cold = CableMaterial::Bamboo.structural_damping_at(-10.0, 65.0);
+        let damp_hot = CableMaterial::Bamboo.structural_damping_at(45.0, 65.0);
+        assert!(damp_hot > damp_cold,
+            "竹索高温阻尼应大于低温: cold={:.4}, hot={:.4}", damp_cold, damp_hot);
+
+        let iron_cold = CableMaterial::IronChain.structural_damping_at(-20.0, 65.0);
+        let iron_hot = CableMaterial::IronChain.structural_damping_at(60.0, 65.0);
+        assert!(iron_hot >= iron_cold,
+            "铁索高温阻尼应≥低温: cold={:.4}, hot={:.4}", iron_cold, iron_hot);
+    }
+
+    #[test]
+    fn test_interpolation_damping_humidity_effect() {
+        let damp_dry = CableMaterial::Rattan.structural_damping_at(20.0, 30.0);
+        let damp_wet = CableMaterial::Rattan.structural_damping_at(20.0, 95.0);
+        assert!(damp_wet > damp_dry,
+            "藤索高湿阻尼应大于低湿: dry={:.4}, wet={:.4}", damp_dry, damp_wet);
+    }
+
+    #[test]
+    fn test_interpolation_modulus_temperature_effect() {
+        let e_cold = CableMaterial::Bamboo.elastic_modulus_at(-10.0, 65.0);
+        let e_hot = CableMaterial::Bamboo.elastic_modulus_at(45.0, 65.0);
+        assert!(e_cold >= e_hot,
+            "竹索低温弹性模量应≥高温: cold={:.2}, hot={:.2}", e_cold, e_hot);
+    }
+
+    #[test]
+    fn test_compute_with_env_differs_from_default() {
+        let profiles_std = MaterialDampingProfile::compute(100.0, 2.8, 15.0, 0.0);
+        let profiles_hot = MaterialDampingProfile::compute_with_env(100.0, 2.8, 15.0, 0.0, 45.0, 90.0);
+        let bamboo_std = profiles_std.iter().find(|p| matches!(p.material, CableMaterial::Bamboo)).unwrap();
+        let bamboo_hot = profiles_hot.iter().find(|p| matches!(p.material, CableMaterial::Bamboo)).unwrap();
+        assert!((bamboo_std.structural_damping - bamboo_hot.structural_damping).abs() > 1e-6,
+            "不同温湿度下竹索阻尼应有差异: std={:.4}, hot={:.4}",
+            bamboo_std.structural_damping, bamboo_hot.structural_damping);
+        assert!(!bamboo_hot.data_source.is_empty(), "数据来源不应为空");
+    }
+
+    #[test]
+    fn test_interpolation_boundary_out_of_range() {
+        let damp_very_cold = CableMaterial::Bamboo.structural_damping_at(-100.0, 65.0);
+        let damp_very_hot = CableMaterial::Bamboo.structural_damping_at(200.0, 65.0);
+        assert!(damp_very_cold.is_finite() && damp_very_cold > 0.0,
+            "超低温外推不应产生异常值");
+        assert!(damp_very_hot.is_finite() && damp_very_hot > 0.0,
+            "超高温外推不应产生异常值");
     }
 }

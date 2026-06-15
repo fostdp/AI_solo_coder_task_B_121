@@ -1,6 +1,81 @@
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum ViewStabilizationMode {
+    None,
+    Reduced,
+    Strong,
+}
+
+impl ViewStabilizationMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ViewStabilizationMode::None => "none",
+            ViewStabilizationMode::Reduced => "reduced",
+            ViewStabilizationMode::Strong => "strong",
+        }
+    }
+
+    pub fn stabilization_factor(&self) -> f64 {
+        match self {
+            ViewStabilizationMode::None => 1.0,
+            ViewStabilizationMode::Reduced => 0.4,
+            ViewStabilizationMode::Strong => 0.1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AntiDizzinessSettings {
+    pub view_stabilization: ViewStabilizationMode,
+    pub max_display_displacement_ratio: f64,
+    pub motion_smoothing_alpha: f64,
+    pub horizon_lock: bool,
+    pub frequency_filter_cutoff_hz: f64,
+    pub motion_sickness_warning: Option<String>,
+}
+
+impl AntiDizzinessSettings {
+    pub fn default_no_protection() -> Self {
+        AntiDizzinessSettings {
+            view_stabilization: ViewStabilizationMode::None,
+            max_display_displacement_ratio: 1.0,
+            motion_smoothing_alpha: 0.0,
+            horizon_lock: false,
+            frequency_filter_cutoff_hz: 100.0,
+            motion_sickness_warning: None,
+        }
+    }
+
+    pub fn default_balanced() -> Self {
+        AntiDizzinessSettings {
+            view_stabilization: ViewStabilizationMode::Reduced,
+            max_display_displacement_ratio: 0.5,
+            motion_smoothing_alpha: 0.3,
+            horizon_lock: true,
+            frequency_filter_cutoff_hz: 2.0,
+            motion_sickness_warning: Some("已启用防眩晕模式: 视角稳定+低通滤波".to_string()),
+        }
+    }
+
+    pub fn default_sensitive() -> Self {
+        AntiDizzinessSettings {
+            view_stabilization: ViewStabilizationMode::Strong,
+            max_display_displacement_ratio: 0.15,
+            motion_smoothing_alpha: 0.6,
+            horizon_lock: true,
+            frequency_filter_cutoff_hz: 1.0,
+            motion_sickness_warning: Some("已启用强防眩晕: 大幅抑制晃动, 建议不适时暂停".to_string()),
+        }
+    }
+
+    pub fn compute_effective_displacement(&self, raw_displacement: f64) -> f64 {
+        let stabilized = raw_displacement * self.view_stabilization.stabilization_factor();
+        stabilized.min(self.max_display_displacement_ratio * raw_displacement.max(0.001))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeCrossingState {
     pub bridge_id: String,
@@ -12,6 +87,8 @@ pub struct BridgeCrossingState {
     pub torsion_angle_deg: f64,
     pub vertical_acceleration: f64,
     pub lateral_acceleration: f64,
+    pub display_vertical_displacement: f64,
+    pub display_lateral_displacement: f64,
     pub perceived_comfort_level: ComfortLevel,
     pub danger_level: DangerLevel,
     pub educational_note: String,
@@ -90,10 +167,15 @@ pub struct VirtualCrossingExperience {
     pub overall_comfort: ComfortLevel,
     pub overall_danger: DangerLevel,
     pub wind_resistance_principles: Vec<String>,
+    pub anti_dizziness: AntiDizzinessSettings,
 }
 
 impl VirtualCrossingExperience {
     pub fn simulate(bridge_id: &str, wind_speed: f64, attack_angle: f64) -> Option<Self> {
+        Self::simulate_with_protection(bridge_id, wind_speed, attack_angle, AntiDizzinessSettings::default_balanced())
+    }
+
+    pub fn simulate_with_protection(bridge_id: &str, wind_speed: f64, attack_angle: f64, anti_dizziness: AntiDizzinessSettings) -> Option<Self> {
         let bridge = crate::models::BRIDGES.iter().find(|b| b.bridge_id == bridge_id)?;
 
         let g = 9.81;
@@ -188,6 +270,9 @@ impl VirtualCrossingExperience {
                 "接近对岸桥台, 结构刚度增大, 振动显著减小。古代桥台多采用石砌重力式, 提供可靠锚固。".to_string()
             };
 
+            let display_vert = anti_dizziness.compute_effective_displacement(vert_disp);
+            let display_lat = anti_dizziness.compute_effective_displacement(lat_disp);
+
             steps.push(BridgeCrossingState {
                 bridge_id: bridge_id.to_string(),
                 position_ratio: pos,
@@ -198,6 +283,8 @@ impl VirtualCrossingExperience {
                 torsion_angle_deg: torsion,
                 vertical_acceleration: vert_acc,
                 lateral_acceleration: lat_acc,
+                display_vertical_displacement: display_vert,
+                display_lateral_displacement: display_lat,
                 perceived_comfort_level: comfort,
                 danger_level: danger,
                 educational_note: note,
@@ -259,6 +346,7 @@ impl VirtualCrossingExperience {
             overall_comfort,
             overall_danger,
             wind_resistance_principles: principles,
+            anti_dizziness,
         })
     }
 }
@@ -457,5 +545,72 @@ mod tests {
         assert!(!r.bridge_name.is_empty());
         assert!(r.span > 0.0);
         assert_eq!(r.attack_angle, 0.0);
+    }
+
+    #[test]
+    fn test_anti_dizziness_balanced_mode() {
+        let r = VirtualCrossingExperience::simulate("BS001", 20.0, 0.0).unwrap();
+        assert!(matches!(r.anti_dizziness.view_stabilization, ViewStabilizationMode::Reduced),
+            "默认simulate应使用balanced防眩晕模式");
+        assert!(r.anti_dizziness.horizon_lock, "balanced模式应启用地平线锁定");
+        assert!(r.anti_dizziness.motion_sickness_warning.is_some(), "balanced模式应有警告提示");
+    }
+
+    #[test]
+    fn test_anti_dizziness_none_vs_strong() {
+        let r_none = VirtualCrossingExperience::simulate_with_protection(
+            "BS001", 20.0, 0.0, AntiDizzinessSettings::default_no_protection()
+        ).unwrap();
+        let r_strong = VirtualCrossingExperience::simulate_with_protection(
+            "BS001", 20.0, 0.0, AntiDizzinessSettings::default_sensitive()
+        ).unwrap();
+
+        let mid_none = &r_none.steps[10];
+        let mid_strong = &r_strong.steps[10];
+        assert!(mid_strong.display_vertical_displacement.abs() <= mid_none.display_vertical_displacement.abs(),
+            "强防眩晕模式下显示位移应≤无保护模式: strong={}, none={}",
+            mid_strong.display_vertical_displacement, mid_none.display_vertical_displacement);
+        assert!((mid_none.display_vertical_displacement - mid_none.vertical_displacement).abs() < 1e-9,
+            "无保护模式显示位移应等于实际位移");
+    }
+
+    #[test]
+    fn test_anti_dizziness_stabilization_factors() {
+        assert!((ViewStabilizationMode::None.stabilization_factor() - 1.0).abs() < 1e-9);
+        assert!((ViewStabilizationMode::Reduced.stabilization_factor() - 0.4).abs() < 1e-9);
+        assert!((ViewStabilizationMode::Strong.stabilization_factor() - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_compute_effective_displacement_clamp() {
+        let settings = AntiDizzinessSettings::default_sensitive();
+        let raw = 0.5;
+        let effective = settings.compute_effective_displacement(raw);
+        assert!(effective <= raw, "有效位移不应超过原始位移: effective={}, raw={}", effective, raw);
+        assert!(effective >= 0.0, "有效位移应为正");
+    }
+
+    #[test]
+    fn test_display_displacement_always_leq_raw() {
+        let r = VirtualCrossingExperience::simulate("BS001", 30.0, 0.0).unwrap();
+        for step in &r.steps {
+            assert!(step.display_vertical_displacement.abs() <= step.vertical_displacement.abs() + 1e-9,
+                "显示竖向位移不应超过实际位移: display={}, raw={}",
+                step.display_vertical_displacement, step.vertical_displacement);
+            assert!(step.display_lateral_displacement.abs() <= step.lateral_displacement.abs() + 1e-9,
+                "显示横向位移不应超过实际位移: display={}, raw={}",
+                step.display_lateral_displacement, step.lateral_displacement);
+        }
+    }
+
+    #[test]
+    fn test_no_protection_raw_equals_display() {
+        let r = VirtualCrossingExperience::simulate_with_protection(
+            "BS001", 20.0, 0.0, AntiDizzinessSettings::default_no_protection()
+        ).unwrap();
+        for step in &r.steps {
+            assert!((step.display_vertical_displacement - step.vertical_displacement).abs() < 1e-9,
+                "无保护模式: 显示位移=实际位移");
+        }
     }
 }
