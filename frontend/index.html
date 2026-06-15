@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>古代悬索桥风致振动监测与气动优化系统</title>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; overflow: hidden; }
+        #app { display: flex; height: 100vh; }
+        #sidebar { width: 360px; background: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; overflow-y: auto; }
+        #sidebar-header { padding: 18px 20px; border-bottom: 1px solid #334155; background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); }
+        #sidebar-header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+        #sidebar-header h2 { margin: 4px 0 0 0; font-size: 11px; font-weight: 400; color: #64748b; letter-spacing: 0.5px; text-transform: uppercase; }
+        .panel { padding: 14px 18px; border-bottom: 1px solid #334155; }
+        .panel-title { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; }
+        .bridge-list { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto; }
+        .bridge-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+        .bridge-item:hover { background: #334155; }
+        .bridge-item.active { background: #3b82f622; border: 1px solid #3b82f655; }
+        .bridge-name { font-size: 13px; font-weight: 500; }
+        .bridge-meta { font-size: 11px; color: #64748b; }
+        .result-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+        .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .result-card { background: #0f172a; padding: 8px 10px; border-radius: 6px; }
+        .result-card-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+        .result-card-value { font-size: 15px; font-weight: 600; margin-top: 2px; }
+        .control-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .control-row label { font-size: 12px; color: #94a3b8; min-width: 60px; }
+        .control-row input[type="range"] { flex: 1; accent-color: #3b82f6; }
+        .control-row .value { font-size: 12px; font-weight: 600; min-width: 65px; text-align: right; }
+        .checkbox-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; cursor: pointer; }
+        .checkbox-row input { accent-color: #3b82f6; }
+        .btn { background: #3b82f6; color: white; border: none; padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+        .btn.secondary { background: #334155; }
+        .btn.secondary:hover { background: #475569; }
+        #main-area { flex: 1; position: relative; overflow: hidden; }
+        #canvas-container { width: 100%; height: 100%; }
+        #detail-panel { position: absolute; top: 20px; right: 20px; width: 280px; background: #1e293bee; backdrop-filter: blur(10px); border: 1px solid #334155; border-radius: 10px; padding: 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); transform: translateX(340px); transition: transform 0.3s ease; z-index: 100; }
+        #detail-panel.visible { transform: translateX(0); }
+        #close-detail { position: absolute; top: 10px; right: 12px; background: none; border: none; color: #94a3b8; font-size: 16px; cursor: pointer; }
+        #close-detail:hover { color: #e2e8f0; }
+        #detail-content { margin-top: 10px; }
+        #right-panels { position: absolute; top: 20px; left: 20px; width: 340px; display: flex; flex-direction: column; gap: 12px; z-index: 50; }
+        .panel-box { background: #1e293bee; backdrop-filter: blur(10px); border: 1px solid #334155; border-radius: 10px; padding: 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.4); }
+        .alert-summary { display: flex; align-items: center; gap: 12px; font-size: 11px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #334155; }
+        .alert-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border-radius: 6px; margin-bottom: 4px; }
+        #alert-list { max-height: 140px; overflow-y: auto; }
+        canvas { background: #0f172a; border-radius: 6px; display: block; }
+        .optim-progress { height: 6px; background: #334155; border-radius: 3px; overflow: hidden; margin: 8px 0; }
+        .optim-progress-bar { height: 100%; background: linear-gradient(90deg, #3b82f6, #22c55e); width: 0%; transition: width 0.3s ease; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <h1>🌉 古代悬索桥监测</h1>
+            <h2>Wind-Induced Vibration Monitoring</h2>
+        </div>
+        <div class="panel">
+            <div class="panel-title">桥梁列表 (10座)</div>
+            <div class="bridge-list" id="bridge-list"></div>
+        </div>
+        <div class="panel">
+            <div id="bridge-title">
+                <div style="font-size:18px;font-weight:600;">请选择桥梁</div>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">风场控制</div>
+            <div class="control-row">
+                <label>风速</label>
+                <input type="range" id="wind-speed" min="0" max="60" step="0.5" value="15">
+                <span class="value" id="wind-value">15.0 m/s</span>
+            </div>
+            <div class="control-row">
+                <label>攻角</label>
+                <input type="range" id="attack-angle" min="-12" max="12" step="0.5" value="0">
+                <span class="value" id="angle-value">0.0°</span>
+            </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="toggle-wind" checked>
+                <label for="toggle-wind">风场流线粒子</label>
+            </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="toggle-deform" checked>
+                <label for="toggle-deform">桥面变形云图</label>
+            </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="toggle-cable">
+                <label for="toggle-cable">主缆索力着色</label>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">气动分析结果</div>
+            <div id="result-display">
+                <div style="padding:20px;text-align:center;color:#64748b;font-size:12px;">等待数据...</div>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">遗传算法优化</div>
+            <button class="btn" id="run-optim" style="width:100%;">🚀 运行气动外形优化</button>
+            <div class="optim-progress"><div class="optim-progress-bar" id="optim-progress"></div></div>
+            <div id="optim-status" style="font-size:11px;color:#94a3b8;margin-top:4px;"></div>
+            <div id="optim-detail"></div>
+        </div>
+    </div>
+    <div id="main-area">
+        <div id="canvas-container"></div>
+        <div id="right-panels">
+            <div class="panel-box">
+                <div class="panel-title">风振响应时程</div>
+                <canvas id="vibration-chart" width="312" height="150"></canvas>
+            </div>
+            <div class="panel-box">
+                <div class="panel-title">颤振临界曲线</div>
+                <canvas id="flutter-chart" width="312" height="150"></canvas>
+            </div>
+            <div class="panel-box">
+                <div class="panel-title">主缆索力分布</div>
+                <canvas id="cable-chart" width="312" height="150"></canvas>
+            </div>
+            <div class="panel-box">
+                <div class="panel-title">实时告警</div>
+                <div id="alert-summary">
+                    <div style="padding:4px;text-align:center;color:#64748b;font-size:12px;">暂无告警</div>
+                </div>
+                <div id="alert-list"></div>
+            </div>
+        </div>
+        <div id="detail-panel">
+            <button id="close-detail">✕</button>
+            <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">桥面检测点</div>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+</div>
+<script src="cable_bridge_3d.js"></script>
+<script src="flutter_panel.js"></script>
+</body>
+</html>
